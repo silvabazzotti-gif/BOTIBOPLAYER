@@ -1,7 +1,7 @@
 const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 const dnsConfig = require('../config/dns');
-const adicionarDns = require('./adicionar_dns'); // Importa a função modular
+const adicionarDns = require('./adicionar_dns');
 
 async function executarIboCom(pedido, atualizarStatus) {
     let browser;
@@ -19,7 +19,7 @@ async function executarIboCom(pedido, atualizarStatus) {
         atualizarStatus(pedido.mac, "acessando_site", "Abrindo portal IBO Player...");
         await page.goto('https://iboplayer.com/device/login', { waitUntil: 'networkidle2', timeout: 60000 });
 
-        // 1. Aceitar Termos
+        // Aceitar Termos
         try {
             await page.waitForSelector('button.bg-main', { timeout: 10000 });
             await page.click('button.bg-main');
@@ -31,48 +31,51 @@ async function executarIboCom(pedido, atualizarStatus) {
             });
         }
 
-        // 2. Captura do Captcha
+        // Print do Captcha
         const seletorForm = '#login-form, form'; 
         await page.waitForSelector(seletorForm, { timeout: 15000 });
         const formElement = await page.$(seletorForm);
-        const captchaBase64 = await formElement.screenshot({ encoding: 'base64', type: 'jpeg' });
+        const captchaBase64 = await formElement.screenshot({ encoding: 'base64', type: 'jpeg', quality: 80 });
 
-        atualizarStatus(pedido.mac, "aguardando_captcha", "Resolva o captcha no painel", { 
+        atualizarStatus(pedido.mac, "aguardando_captcha", "Digite o código para continuar...", { 
             captchaBase64: `data:image/jpeg;base64,${captchaBase64}` 
         });
 
-        // Espera o cliente digitar no painel
+        // ESPERA ATÉ VOCÊ CLICAR EM "CONFIRMAR CÓDIGO" NO PAINEL
         while (!pedido.captchaDigitado) {
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 1000));
         }
 
-        // 3. Preenchimento e Login
+        atualizarStatus(pedido.mac, "processando", "Autenticando...");
+
+        // Preenchimento com IDs fixos (mais seguros)
         await page.type("#max-address", pedido.mac, { delay: 50 });
         await page.type("#device-key", pedido.key, { delay: 50 });
         await page.type("input[name='captcha']", pedido.captchaDigitado, { delay: 50 });
 
+        // Clica e aguarda dashboard
         await Promise.all([
             page.click("button[type='submit']"),
             page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => {})
         ]);
 
         if (page.url().includes("login")) {
-            throw new Error("Dados ou Captcha inválidos.");
+            pedido.captchaDigitado = null; // Reseta para nova tentativa se falhar
+            throw new Error("Captcha incorreto ou dados inválidos.");
         }
 
-        // 4. Início do Loop de DNS (Chamando o módulo separado)
+        // Loop de Playlists
         const servidores = dnsConfig.servidores || [];
         for (let i = 0; i < servidores.length; i++) {
             const dns = servidores[i];
-            const nomeLista = `Server ${i + 1}`;
-            const urlM3u = `${dns}/get.php?username=${pedido.user}&password=${pedido.pass}&type=m3u_plus&output=ts`;
+            const nome = `Server ${i + 1}`;
+            const url = `${dns}/get.php?username=${pedido.user}&password=${pedido.pass}&type=m3u_plus&output=ts`;
 
-            atualizarStatus(pedido.mac, "processando", `Adicionando DNS ${i + 1} de ${servidores.length}...`);
-            
-            await adicionarDns(page, nomeLista, urlM3u);
+            atualizarStatus(pedido.mac, "processando", `Enviando DNS ${i + 1} de ${servidores.length}...`);
+            await adicionarDns(page, nome, url);
         }
 
-        atualizarStatus(pedido.mac, "ok", "✅ Todas as listas foram configuradas!");
+        atualizarStatus(pedido.mac, "ok", "✅ Finalizado com sucesso!");
 
     } catch (error) {
         atualizarStatus(pedido.mac, "erro", error.message);
