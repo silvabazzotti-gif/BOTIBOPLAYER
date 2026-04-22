@@ -1,6 +1,5 @@
 const express = require('express');
 const path = require('path');
-const dnsConfig = require('./src/config/dns'); 
 const { executarIboCom } = require('./src/bot/bot_ibocom');
 
 const app = express();
@@ -24,15 +23,7 @@ function atualizarStatus(mac, status, mensagem, extras = {}) {
 app.post('/ativar', (req, res) => {
     const { mac } = req.body;
     pedidos = pedidos.filter(p => p.mac !== mac);
-    
-    const novoPedido = { 
-        ...req.body, 
-        status: 'pendente', 
-        mensagem: 'Aguardando processamento...', 
-        captchaDigitado: null 
-    };
-    
-    pedidos.push(novoPedido);
+    pedidos.push({ ...req.body, status: 'pendente', mensagem: 'Na fila...', captchaDigitado: null });
     res.json({ success: true });
 });
 
@@ -40,33 +31,26 @@ app.post('/resolver-captcha', (req, res) => {
     const { mac, texto } = req.body;
     const pedido = pedidos.find(p => p.mac === mac);
     if (pedido) {
-        pedido.captchaDigitado = texto; // Isso libera o loop no bot_ibocom.js
+        pedido.captchaDigitado = texto;
         res.json({ success: true });
     } else {
-        res.status(404).json({ error: "Sessão não encontrada" });
+        res.status(404).json({ error: "Sessão expirada" });
     }
 });
 
 app.get('/status', (req, res) => {
     const pedido = pedidos.find(p => p.mac === req.query.mac);
-    res.json(pedido || { status: "nao_encontrado" });
+    res.json(pedido || { status: 'nao_encontrado' });
 });
 
-// Processador de Fila
 setInterval(async () => {
     if (botOcupado) return;
-    const pedido = pedidos.find(p => p.status === "pendente" || p.status === "iniciando");
-    
+    const pedido = pedidos.find(p => p.status === "pendente");
     if (pedido) {
         botOcupado = true;
-        try {
-            await executarIboCom(pedido, atualizarStatus);
-        } catch (e) {
-            console.error("Erro no bot:", e);
-        } finally {
-            botOcupado = false;
-        }
+        await executarIboCom(pedido, atualizarStatus).catch(console.error);
+        botOcupado = false;
     }
 }, 3000);
 
-app.listen(port, '0.0.0.0', () => console.log(`Servidor ativo na porta ${port}`));
+app.listen(port, '0.0.0.0', () => console.log(`🚀 Servidor pronto na porta ${port}`));
