@@ -29,11 +29,25 @@ async function executarIboCom(pedido, atualizarStatus) {
             });
         }
 
-        // 2. CAPTURA DO CAPTCHA
+        // --- SUA ESTRATÉGIA: REFRESH NO CAPTCHA ---
+        atualizarStatus(pedido.mac, "processando", "Atualizando Captcha para garantir validade...");
+        try {
+            // Procura o botão de refresh pelo texto conforme seu print
+            await page.evaluate(() => {
+                const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Refresh'));
+                if (btn) btn.click();
+            });
+            // Espera 3 segundos para a nova imagem carregar
+            await new Promise(r => setTimeout(r, 3000)); 
+        } catch (e) {
+            console.log("Erro ao dar refresh, seguindo com o original");
+        }
+
+        // 2. CAPTURA DO NOVO CAPTCHA
         const formElement = await page.$('form');
         const captchaBase64 = await formElement.screenshot({ encoding: 'base64', type: 'jpeg', quality: 80 });
 
-        atualizarStatus(pedido.mac, "aguardando_captcha", "Digite o código da imagem:", {
+        atualizarStatus(pedido.mac, "aguardando_captcha", "Digite o NOVO código:", {
             captchaBase64: `data:image/jpeg;base64,${captchaBase64}`
         });
 
@@ -43,56 +57,48 @@ async function executarIboCom(pedido, atualizarStatus) {
 
         atualizarStatus(pedido.mac, "processando", "Autenticando...");
 
-        // 3. PREENCHIMENTO (Limpando antes de digitar)
+        // 3. PREENCHIMENTO (MAC, KEY e CAPTCHA)
         await page.click("#max-address", { clickCount: 3 });
-        await page.type("#max-address", pedido.mac, { delay: 30 });
+        await page.type("#max-address", pedido.mac, { delay: 40 });
         
         await page.click("#device-key", { clickCount: 3 });
-        await page.type("#device-key", pedido.key, { delay: 30 });
+        await page.type("#device-key", pedido.key, { delay: 40 });
 
-        // Lógica para achar o input de captcha que está acima do botão Refresh
         await page.evaluate((codigo) => {
             const refreshBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Refresh'));
-            let target;
-            if (refreshBtn) {
-                target = refreshBtn.parentElement.querySelector('input');
-            }
-            if (!target) {
-                target = document.querySelectorAll('form input[type="text"]')[2];
-            }
+            const target = refreshBtn ? refreshBtn.parentElement.querySelector('input') : document.querySelectorAll('form input[type="text"]')[2];
 
             if (target) {
-                target.value = ""; // Limpa campo
+                target.value = "";
                 target.focus();
                 target.value = codigo;
-                // Dispara eventos para o site reconhecer a mudança
                 ['input', 'change', 'blur'].forEach(ev => target.dispatchEvent(new Event(ev, { bubbles: true })));
             }
         }, pedido.captchaDigitado);
 
-        // 4. CLIQUE NO LOGIN
+        // 4. LOGIN
         await Promise.all([
             page.evaluate(() => document.querySelector("button[type='submit']").click()),
             page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {})
         ]);
 
         if (page.url().includes("login")) {
-            pedido.captchaDigitado = null; // Reseta para permitir nova tentativa
-            throw new Error("Dados ou Captcha incorretos. Tente novamente.");
+            pedido.captchaDigitado = null;
+            throw new Error("Falha no login. Verifique o código e tente novamente.");
         }
 
-        // 5. ADICIONAR PLAYLISTS
+        // 5. ADICIONAR PLAYLISTS (O Loop de 15 DNS)
         const servidores = dnsConfig.servidores || [];
         for (let i = 0; i < servidores.length; i++) {
             const urlM3u = `${servidores[i]}/get.php?username=${pedido.user}&password=${pedido.pass}&type=m3u_plus&output=ts`;
-            atualizarStatus(pedido.mac, "processando", `Enviando DNS ${i + 1}...`);
+            atualizarStatus(pedido.mac, "processando", `DNS ${i + 1} de ${servidores.length}...`);
             await adicionarDns(page, `Server ${i + 1}`, urlM3u);
         }
 
-        atualizarStatus(pedido.mac, "ok", "✅ Finalizado com sucesso!");
+        atualizarStatus(pedido.mac, "ok", "✅ Todas as listas foram configuradas!");
 
     } catch (error) {
-        atualizarStatus(pedido.mac, "erro", "Falha: " + error.message);
+        atualizarStatus(pedido.mac, "erro", "Erro: " + error.message);
     } finally {
         if (browser) await browser.close();
     }
