@@ -4,7 +4,7 @@ module.exports = async (page, nome, m3u) => {
         await page.waitForSelector(btnAdd, { visible: true, timeout: 15000 });
         await page.click(btnAdd);
         
-        await new Promise(r => setTimeout(r, 2500));
+        await new Promise(r => setTimeout(r, 2000));
         await page.waitForSelector("#playlist-name", { visible: true });
         
         await page.click("#playlist-name", { clickCount: 3 });
@@ -15,13 +15,12 @@ module.exports = async (page, nome, m3u) => {
 
         await page.click("button[type='submit'].flex.ml-auto");
         
-        // Aguarda 12 segundos para o servidor do IBO processar
         await new Promise(r => setTimeout(r, 12000));
         await page.goto('https://iboplayer.com/dashboard', { waitUntil: 'networkidle2' });
         
         return true;
     } catch (error) {
-        console.error(`Erro DNS ${nome}:`, error.message);
+        console.error(`Erro no DNS ${nome}:`, error.message);
         return false;
     }
 };
