@@ -29,25 +29,34 @@ async function executarIboCom(pedido, atualizarStatus) {
             });
         }
 
-        // --- SUA ESTRATÉGIA: REFRESH NO CAPTCHA ---
-        atualizarStatus(pedido.mac, "processando", "Atualizando Captcha para garantir validade...");
+        // --- REFRESH NO CAPTCHA PARA GARANTIR VALIDADE ---
         try {
-            // Procura o botão de refresh pelo texto conforme seu print
             await page.evaluate(() => {
                 const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Refresh'));
                 if (btn) btn.click();
             });
-            // Espera 3 segundos para a nova imagem carregar
-            await new Promise(r => setTimeout(r, 3000)); 
+            await new Promise(r => setTimeout(r, 2500)); 
+        } catch (e) {}
+
+        // 2. PRINT APENAS DA ÁREA DO CAPTCHA (Otimizado)
+        // No IBO, a imagem e o input geralmente estão dentro de uma div específica
+        let captchaBase64 = "";
+        try {
+            // Tentamos capturar a div que contém a imagem do captcha
+            const areaCaptcha = await page.$('img[src*="captcha"]').then(img => img.getProperty('parentElement')).then(div => div.asElement());
+            if (areaCaptcha) {
+                captchaBase64 = await areaCaptcha.screenshot({ encoding: 'base64', type: 'jpeg' });
+            } else {
+                // Fallback para o form caso não ache a div
+                const form = await page.$('form');
+                captchaBase64 = await form.screenshot({ encoding: 'base64', type: 'jpeg' });
+            }
         } catch (e) {
-            console.log("Erro ao dar refresh, seguindo com o original");
+            console.log("Erro ao focar print, tirando da página toda.");
+            captchaBase64 = await page.screenshot({ encoding: 'base64', type: 'jpeg' });
         }
 
-        // 2. CAPTURA DO NOVO CAPTCHA
-        const formElement = await page.$('form');
-        const captchaBase64 = await formElement.screenshot({ encoding: 'base64', type: 'jpeg', quality: 80 });
-
-        atualizarStatus(pedido.mac, "aguardando_captcha", "Digite o NOVO código:", {
+        atualizarStatus(pedido.mac, "aguardando_captcha", "Digite o código abaixo:", {
             captchaBase64: `data:image/jpeg;base64,${captchaBase64}`
         });
 
@@ -55,28 +64,21 @@ async function executarIboCom(pedido, atualizarStatus) {
             await new Promise(r => setTimeout(r, 1000));
         }
 
+        // 3. PREENCHIMENTO E LOGIN
         atualizarStatus(pedido.mac, "processando", "Autenticando...");
-
-        // 3. PREENCHIMENTO (MAC, KEY e CAPTCHA)
-        await page.click("#max-address", { clickCount: 3 });
         await page.type("#max-address", pedido.mac, { delay: 40 });
-        
-        await page.click("#device-key", { clickCount: 3 });
         await page.type("#device-key", pedido.key, { delay: 40 });
 
         await page.evaluate((codigo) => {
             const refreshBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Refresh'));
             const target = refreshBtn ? refreshBtn.parentElement.querySelector('input') : document.querySelectorAll('form input[type="text"]')[2];
-
             if (target) {
-                target.value = "";
                 target.focus();
                 target.value = codigo;
-                ['input', 'change', 'blur'].forEach(ev => target.dispatchEvent(new Event(ev, { bubbles: true })));
+                ['input', 'change'].forEach(ev => target.dispatchEvent(new Event(ev, { bubbles: true })));
             }
         }, pedido.captchaDigitado);
 
-        // 4. LOGIN
         await Promise.all([
             page.evaluate(() => document.querySelector("button[type='submit']").click()),
             page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {})
@@ -84,10 +86,10 @@ async function executarIboCom(pedido, atualizarStatus) {
 
         if (page.url().includes("login")) {
             pedido.captchaDigitado = null;
-            throw new Error("Falha no login. Verifique o código e tente novamente.");
+            throw new Error("Dados ou Captcha incorretos.");
         }
 
-        // 5. ADICIONAR PLAYLISTS (O Loop de 15 DNS)
+        // 4. ADICIONAR PLAYLISTS
         const servidores = dnsConfig.servidores || [];
         for (let i = 0; i < servidores.length; i++) {
             const urlM3u = `${servidores[i]}/get.php?username=${pedido.user}&password=${pedido.pass}&type=m3u_plus&output=ts`;
@@ -95,10 +97,10 @@ async function executarIboCom(pedido, atualizarStatus) {
             await adicionarDns(page, `Server ${i + 1}`, urlM3u);
         }
 
-        atualizarStatus(pedido.mac, "ok", "✅ Todas as listas foram configuradas!");
+        atualizarStatus(pedido.mac, "ok", "✅ Finalizado com sucesso!");
 
     } catch (error) {
-        atualizarStatus(pedido.mac, "erro", "Erro: " + error.message);
+        atualizarStatus(pedido.mac, "erro", "Falha: " + error.message);
     } finally {
         if (browser) await browser.close();
     }
