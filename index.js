@@ -34,7 +34,7 @@ app.post('/resolver-captcha', (req, res) => {
         pedido.captchaDigitado = texto;
         res.json({ success: true });
     } else {
-        res.status(404).json({ error: "Sessão expirada" });
+        res.status(404).json({ error: "Sessão não encontrada" });
     }
 });
 
@@ -48,9 +48,9 @@ setInterval(async () => {
     const pedido = pedidos.find(p => p.status === "pendente");
     if (pedido) {
         botOcupado = true;
-        await executarIboCom(pedido, atualizarStatus).catch(console.error);
+        await executarIboCom(pedido, atualizarStatus).catch(err => console.error("Erro Fila:", err));
         botOcupado = false;
     }
 }, 3000);
 
-app.listen(port, '0.0.0.0', () => console.log(`🚀 Servidor pronto na porta ${port}`));
+app.listen(port, '0.0.0.0', () => console.log(`🚀 Servidor na porta ${port}`));
